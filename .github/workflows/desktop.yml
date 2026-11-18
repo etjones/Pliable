@@ -1,30 +1,57 @@
 # Desktop shell (Tauri): freeze the core, build the shell, assemble the portable archive and smoke-test it.
-# Manual only: start it from the Actions tab to build and smoke-test the portable desktop archives on a branch.
+# Runs on pull requests and pushes to main that change anything but documents, and by hand from the Actions tab.
+# The Intel Mac build is left out unless the run was started by hand; release.yml always builds it.
+# Not a required check. Downloaded packages and the compiled shell dependencies are cached between runs; the core
+# is frozen fresh every time.
 name: desktop
 
 on:
+  pull_request:
+    paths-ignore: ["**.md", "docs/**"]
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch: {}
 
 permissions:
   contents: read
 
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: build (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: windows-latest, label: windows-x64 }
-          - { os: macos-latest, label: macos-arm64 }
-          - { os: macos-15-intel, label: macos-x64 }
-          - { os: ubuntu-24.04, label: linux-x64 }
+        # The Intel Mac build (macos-x64) is in the list only for a run started by hand.
+        include: >-
+          ${{ fromJSON(format('[
+            {{"os": "windows-latest", "label": "windows-x64"}},
+            {{"os": "macos-latest", "label": "macos-arm64"}},
+            {{"os": "ubuntu-24.04", "label": "linux-x64"}}{0}
+          ]', github.event_name == 'workflow_dispatch' && ', {"os": "macos-15-intel", "label": "macos-x64"}' || '')) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 24 }
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            app/package-lock.json
+            desktop/package-lock.json
       - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: core/uv.lock
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: ${{ matrix.label }}
       - name: Install the Linux webview libraries
         if: runner.os == 'Linux'
         run: |
