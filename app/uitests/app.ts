@@ -1,14 +1,32 @@
 /** Steps the browser tests share: opening the page ready for use, and the common actions done through page controls. */
 import { expect, type Page } from "@playwright/test";
 
-/** Open the page with a fresh copy of the bracket sample and close the Getting started card (the alpha notice was read in
- *  firstrun.setup.ts). The core hands a reloaded page its previous session, so the sample is opened again to drop whatever
- *  an earlier test left: its edits and its undo history. */
+/** How long the first model may take to arrive after the page loads; a busy computer needs well over the usual wait. */
+const FIRST_MODEL_MS = 20_000;
+
+/** Wait until the page has its first model from the core. */
+export async function expectModelLoaded(page: Page): Promise<void> {
+  await expect(page.locator("#status")).toContainText(/\d+ faces/, { timeout: FIRST_MODEL_MS });
+}
+
+/** Close the alpha notice and the Getting started card whenever either is showing before a step, for as long as the page
+ *  is open. A test goes on as usual when neither is showing. The button is pressed from inside the page, because the card
+ *  can appear late, under a menu the test has already opened, where a pointer click would wait for it to be uncovered. */
+export async function closeNotices(page: Page): Promise<void> {
+  const buttons = [
+    page.getByRole("button", { name: "I understand" }),
+    page.locator("#gettingstarted").getByRole("button", { name: "Got it" }),
+  ];
+  for (const button of buttons) await page.addLocatorHandler(button, () => button.evaluate((el: HTMLElement) => el.click()));
+}
+
+/** Open the page with a fresh copy of the bracket sample and nothing covering it. The core hands a reloaded page its
+ *  previous session, so the sample is opened again to drop whatever an earlier test left: its edits and its undo history. */
 export async function openApp(page: Page): Promise<void> {
   page.on("dialog", (dialog) => void dialog.accept()); // replacing an edited model asks first
+  await closeNotices(page);
   await page.goto("/");
-  await expect(page.locator("#status")).toContainText(/\d+ faces/);
-  await page.getByRole("button", { name: "Got it" }).click();
+  await expectModelLoaded(page);
   await page.locator("#menubtn").click();
   await page.locator("#demo").selectOption("bracket");
   await expect(page.locator("#undo")).toBeDisabled();
